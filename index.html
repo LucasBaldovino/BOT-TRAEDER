@@ -8,6 +8,8 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="BotTrader">
   <meta name="mobile-web-app-capable" content="yes">
+  <link rel="manifest" href="manifest.json">
+  <link rel="apple-touch-icon" href="icon-192.png">
   <title>🤖 Bot Trader BTC</title>
   <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
@@ -415,18 +417,13 @@ root.render(<TradingBot/>);
 </script>
 
 <script>
-// PWA Manifest dinámico
-const manifest={
-  name:'Bot Trader BTC',short_name:'BotTrader',
-  description:'Bot de trading automático para Bitcoin',
-  start_url:'.',display:'standalone',
-  background_color:'#070B14',theme_color:'#070B14',
-  icons:[{src:"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",sizes:"192x192",type:"image/png"}]
-};
-const blob=new Blob([JSON.stringify(manifest)],{type:'application/json'});
-const link=document.createElement('link');
-link.rel='manifest'; link.href=URL.createObjectURL(blob);
-document.head.appendChild(link);
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js')
+      .then(() => console.log('SW registrado'))
+      .catch(e => console.log('SW error:', e));
+  });
+}
 </script>
 </body>
 </html>
