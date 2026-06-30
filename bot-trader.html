@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="theme-color" content="#070B14">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="BotTrader">
+  <meta name="mobile-web-app-capable" content="yes">
+  <title>🤖 Bot Trader BTC</title>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{background:#070B14;color:#E2E8F0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:13px;-webkit-tap-highlight-color:transparent;overscroll-behavior:none}
+    ::-webkit-scrollbar{width:4px}
+    ::-webkit-scrollbar-track{background:#070B14}
+    ::-webkit-scrollbar-thumb{background:#1E3A5F;border-radius:2px}
+    input[type=range]{-webkit-appearance:none;width:100%;height:4px;border-radius:2px;background:#1E3A5F;outline:none}
+    input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;height:20px;border-radius:50%;background:#00D4FF;cursor:pointer}
+    button{-webkit-tap-highlight-color:transparent}
+  </style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useEffect, useRef, useCallback } = React;
+
+const INITIAL_USD   = 10000;
+const UPDATE_MS     = 10000;
+const MAX_HISTORY   = 80;
+const AUTO_START_AT = 16;
+
+const C = {
+  cyan:'#00D4FF',green:'#10B981',red:'#EF4444',
+  amber:'#F59E0B',purple:'#8B5CF6',muted:'#64748B',
+  text:'#E2E8F0',card:'#0D1526',bg:'#070B14',border:'#1E3A5F',
+};
+
+function calcRSI(prices, n=14) {
+  if (prices.length<=n) return null;
+  const sl=prices.slice(-n-1); let g=0,l=0;
+  for(let i=1;i<sl.length;i++){const d=sl[i]-sl[i-1]; d>0?(g+=d):(l-=d);}
+  const rs=(g/n)/((l/n)||1e-10);
+  return +(100-100/(1+rs)).toFixed(1);
+}
+function calcMA(prices,n){
+  if(prices.length<n) return null;
+  return +(prices.slice(-n).reduce((a,b)=>a+b,0)/n).toFixed(0);
+}
+async function fetchBTC(){
+  try{
+    const r=await fetch('https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd',{signal:AbortSignal.timeout(5000)});
+    const d=await r.json(); return d.bitcoin.usd;
+  }catch{return null;}
+}
+
+function PriceChart({history}){
+  const canvasRef=useRef(null); const chartRef=useRef(null);
+  useEffect(()=>{
+    if(!canvasRef.current||history.length<2) return;
+    if(chartRef.current){
+      chartRef.current.data.labels=history.map(h=>h.time);
+      chartRef.current.data.datasets[0].data=history.map(h=>h.price);
+      chartRef.current.data.datasets[1].data=history.map(h=>h.ma7);
+      chartRef.current.data.datasets[2].data=history.map(h=>h.ma25);
+      chartRef.current.update('none'); return;
+    }
+    const ctx=canvasRef.current.getContext('2d');
+    chartRef.current=new Chart(ctx,{
+      type:'line',
+      data:{
+        labels:history.map(h=>h.time),
+        datasets:[
+          {label:'BTC',data:history.map(h=>h.price),borderColor:C.cyan,borderWidth:2,pointRadius:0,tension:0.1,fill:false},
+          {label:'MA7',data:history.map(h=>h.ma7),borderColor:C.amber,borderWidth:1.5,pointRadius:0,tension:0.1,borderDash:[5,3],fill:false},
+          {label:'MA25',data:history.map(h=>h.ma25),borderColor:C.purple,borderWidth:1.5,pointRadius:0,tension:0.1,borderDash:[5,3],fill:false},
+        ]
+      },
+      options:{
+        responsive:true,maintainAspectRatio:false,animation:false,
+        scales:{
+          x:{ticks:{color:C.muted,maxTicksLimit:5,font:{size:9}},grid:{color:C.border}},
+          y:{ticks:{color:C.muted,font:{size:9},callback:v=>`${(v/1000).toFixed(0)}k`},grid:{color:C.border}},
+        },
+        plugins:{
+          legend:{display:true,labels:{color:C.muted,boxWidth:20,font:{size:10}}},
+          tooltip:{backgroundColor:C.card,borderColor:C.border,borderWidth:1,titleColor:C.cyan,bodyColor:C.text,
+            callbacks:{label:ctx=>`$${ctx.parsed.y?.toLocaleString('es-AR')}`}}
+        }
+      }
+    });
+    return()=>{chartRef.current?.destroy();chartRef.current=null;};
+  },[history]);
+  return <div style={{position:'relative',height:185}}><canvas ref={canvasRef}/></div>;
+}
+
+function RSIChart({history}){
+  const canvasRef=useRef(null); const chartRef=useRef(null);
+  useEffect(()=>{
+    if(!canvasRef.current||history.length<2) return;
+    if(chartRef.current){
+      chartRef.current.data.labels=history.map(h=>h.time);
+      chartRef.current.data.datasets[0].data=history.map(h=>h.rsi);
+      chartRef.current.update('none'); return;
+    }
+    const ctx=canvasRef.current.getContext('2d');
+    chartRef.current=new Chart(ctx,{
+      type:'line',
+      data:{
+        labels:history.map(h=>h.time),
+        datasets:[{label:'RSI',data:history.map(h=>h.rsi),borderColor:'#A78BFA',borderWidth:1.5,pointRadius:0,tension:0.1,fill:false}]
+      },
+      options:{
+        responsive:true,maintainAspectRatio:false,animation:false,
+        scales:{
+          x:{display:false},
+          y:{min:0,max:100,ticks:{color:C.muted,font:{size:9},stepSize:25},grid:{color:C.border}},
+        },
+        plugins:{
+          legend:{display:false},
+          tooltip:{backgroundColor:C.card,borderColor:C.border,borderWidth:1,bodyColor:C.text}
+        }
+      }
+    });
+    return()=>{chartRef.current?.destroy();chartRef.current=null;};
+  },[history]);
+  return <div style={{position:'relative',height:75}}><canvas ref={canvasRef}/></div>;
+}
+
+function TradingBot(){
+  const [history,  setHistory]  = useState([]);
+  const [portfolio,setPortfolio]= useState({usd:INITIAL_USD,btc:0});
+  const [trades,   setTrades]   = useState([]);
+  const [strategy, setStrategy] = useState('rsi');
+  const [isAuto,   setIsAuto]   = useState(true);
+  const [livePrice,setLivePrice]= useState(null);
+  const [connOK,   setConnOK]   = useState(false);
+  const [lastSig,  setLastSig]  = useState(null);
+  const [tradeSize,setTradeSize]= useState(50);
+  const [tab,      setTab]      = useState('chart');
+  const [warmup,   setWarmup]   = useState(true);
+
+  const histRef  =useRef([]); const portRef  =useRef({usd:INITIAL_USD,btc:0});
+  const tradesRef=useRef([]); const autoRef  =useRef(true);
+  const stratRef =useRef('rsi'); const sizeRef=useRef(50);
+  const simPrice =useRef(null);
+
+  const toggleAuto     =()=>{const v=!isAuto;autoRef.current=v;setIsAuto(v);};
+  const changeStrategy =s=>{stratRef.current=s;setStrategy(s);};
+  const changeSize     =v=>{sizeRef.current=v;setTradeSize(v);};
+
+  const doTrade=useCallback((type,price)=>{
+    const port=portRef.current; const pct=sizeRef.current/100;
+    if(type==='BUY'){
+      const spend=port.usd*pct; if(spend<5) return;
+      const btc=spend/price;
+      portRef.current={usd:port.usd-spend,btc:port.btc+btc};
+      setPortfolio({...portRef.current});
+      const t={id:Date.now(),type,price,btc,usd:spend,time:new Date().toLocaleTimeString('es-AR')};
+      tradesRef.current=[t,...tradesRef.current].slice(0,40);
+      setTrades([...tradesRef.current]);
+    } else {
+      if(port.btc<=0) return;
+      const recv=port.btc*price;
+      const last=tradesRef.current.find(x=>x.type==='BUY');
+      const pnl=last?recv-last.usd:0;
+      portRef.current={usd:port.usd+recv,btc:0};
+      setPortfolio({...portRef.current});
+      const t={id:Date.now(),type,price,btc:port.btc,usd:recv,pnl,time:new Date().toLocaleTimeString('es-AR')};
+      tradesRef.current=[t,...tradesRef.current].slice(0,40);
+      setTrades([...tradesRef.current]);
+    }
+  },[]);
+
+  const checkStrategy=useCallback((price,hist)=>{
+    if(!autoRef.current||hist.length<AUTO_START_AT) return;
+    const strat=stratRef.current; const port=portRef.current;
+    const cur=hist[hist.length-1]; const prv=hist[hist.length-2];
+    if(strat==='rsi'&&cur.rsi!==null){
+      if(cur.rsi<30&&port.btc===0){doTrade('BUY',price);setLastSig({type:'BUY',text:`RSI ${cur.rsi} → COMPRA AUTOMÁTICA`,t:cur.time});}
+      else if(cur.rsi>70&&port.btc>0){doTrade('SELL',price);setLastSig({type:'SELL',text:`RSI ${cur.rsi} → VENTA AUTOMÁTICA`,t:cur.time});}
+    } else if(strat==='ma'&&cur.ma7&&cur.ma25&&prv?.ma7&&prv?.ma25){
+      if(prv.ma7<=prv.ma25&&cur.ma7>cur.ma25&&port.btc===0){doTrade('BUY',price);setLastSig({type:'BUY',text:`Cruce alcista MA7>MA25 → COMPRA`,t:cur.time});}
+      else if(prv.ma7>=prv.ma25&&cur.ma7<cur.ma25&&port.btc>0){doTrade('SELL',price);setLastSig({type:'SELL',text:`Cruce bajista MA7<MA25 → VENTA`,t:cur.time});}
+    }
+  },[doTrade]);
+
+  useEffect(()=>{
+    const tick=async()=>{
+      const real=await fetchBTC(); let p;
+      if(real){p=real;setConnOK(true);}
+      else{
+        if(!simPrice.current)simPrice.current=65000;
+        simPrice.current*=(1+(Math.random()-0.498)*0.005);
+        p=+simPrice.current.toFixed(2);setConnOK(false);
+      }
+      setLivePrice(p);
+      const rawPrices=[...histRef.current.map(h=>h.price),p];
+      const point={time:new Date().toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'}),price:p,rsi:calcRSI(rawPrices),ma7:calcMA(rawPrices,7),ma25:calcMA(rawPrices,25)};
+      const newHist=[...histRef.current,point].slice(-MAX_HISTORY);
+      histRef.current=newHist; setHistory([...newHist]);
+      if(newHist.length>=AUTO_START_AT) setWarmup(false);
+      checkStrategy(p,newHist);
+    };
+    tick(); const id=setInterval(tick,UPDATE_MS); return()=>clearInterval(id);
+  },[checkStrategy]);
+
+  const totalVal=portfolio.usd+portfolio.btc*(livePrice||0);
+  const ret=((totalVal/INITIAL_USD)-1)*100;
+  const sells=trades.filter(t=>t.type==='SELL');
+  const wins=sells.filter(t=>t.pnl>0).length;
+  const winRate=sells.length?Math.round((wins/sells.length)*100):null;
+  const totalPnL=sells.reduce((a,t)=>a+(t.pnl||0),0);
+  const latHist=history[history.length-1];
+  const chg=history.length>1?((history[history.length-1].price-history[0].price)/history[0].price*100):null;
+  const warmupLeft=Math.max(0,AUTO_START_AT-history.length);
+  const $$=(n,d=2)=>n!=null?`$${n.toLocaleString('es-AR',{minimumFractionDigits:d,maximumFractionDigits:d})}`:'--';
+
+  return (
+    <div style={{minHeight:'100vh',background:C.bg,color:C.text}}>
+
+      {/* Header */}
+      <div style={{background:C.card,borderBottom:`1px solid ${C.border}`,padding:'12px 16px'}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
+          <div>
+            <div style={{fontSize:10,color:C.muted,letterSpacing:1.5,marginBottom:3}}>
+              🤖 BOT TRADER · {isAuto?(warmup?'CALENTANDO...':'ACTIVO'):'PAUSADO'}
+            </div>
+            <div style={{display:'flex',alignItems:'baseline',gap:10}}>
+              <span style={{fontSize:26,fontWeight:900,fontFamily:'monospace',color:C.cyan}}>
+                {livePrice?`$${Math.round(livePrice).toLocaleString('es-AR')}`:'---'}
+              </span>
+              {chg!=null&&<span style={{fontSize:13,color:chg>=0?C.green:C.red,fontWeight:700}}>{chg>=0?'▲':'▼'} {Math.abs(chg).toFixed(2)}%</span>}
+            </div>
+            <div style={{fontSize:11,color:connOK?C.green:C.amber,marginTop:2}}>
+              {connOK?'🟢 BTC/USDT en vivo':'🟡 Modo simulación'}
+            </div>
+          </div>
+          <div style={{textAlign:'right'}}>
+            <div style={{fontSize:10,color:C.muted}}>CAPITAL</div>
+            <div style={{fontSize:20,fontWeight:900,fontFamily:'monospace',color:ret>=0?C.green:C.red}}>{$$(totalVal)}</div>
+            <div style={{fontSize:12,color:ret>=0?C.green:C.red,fontWeight:700}}>{ret>=0?'▲':'▼'} {Math.abs(ret).toFixed(2)}%</div>
+          </div>
+        </div>
+
+        {warmup&&(
+          <div style={{marginTop:10}}>
+            <div style={{display:'flex',justifyContent:'space-between',fontSize:10,color:C.muted,marginBottom:4}}>
+              <span>Recolectando datos...</span><span>{AUTO_START_AT-warmupLeft}/{AUTO_START_AT}</span>
+            </div>
+            <div style={{background:C.border,borderRadius:4,height:5}}>
+              <div style={{background:C.cyan,height:5,borderRadius:4,transition:'width .5s',width:`${((AUTO_START_AT-warmupLeft)/AUTO_START_AT)*100}%`}}/>
+            </div>
+          </div>
+        )}
+
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr 1fr',gap:6,marginTop:10}}>
+          {[
+            {label:'USD LIBRE',val:$$(portfolio.usd,0),col:C.text},
+            {label:'BTC',val:portfolio.btc>0?portfolio.btc.toFixed(5):'0.00000',col:C.amber},
+            {label:'P&L',val:$$(totalPnL),col:totalPnL>=0?C.green:C.red},
+            {label:'WIN %',val:winRate!=null?`${winRate}%`:'--',col:winRate!=null&&winRate>=50?C.green:C.red},
+          ].map(({label,val,col})=>(
+            <div key={label} style={{background:C.bg,borderRadius:8,padding:'6px 4px',textAlign:'center'}}>
+              <div style={{fontSize:9,color:C.muted,letterSpacing:0.5,marginBottom:2}}>{label}</div>
+              <div style={{fontSize:11,fontWeight:700,fontFamily:'monospace',color:col}}>{val}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Tabs */}
+      <div style={{display:'flex',background:C.card,borderBottom:`1px solid ${C.border}`}}>
+        {[['chart','📈 Gráfico'],['trades','📋 Trades'],['stats','📊 Stats']].map(([id,label])=>(
+          <button key={id} onClick={()=>setTab(id)}
+            style={{flex:1,padding:'10px 0',border:'none',background:'transparent',
+              color:tab===id?C.cyan:C.muted,fontWeight:tab===id?700:400,fontSize:12,
+              borderBottom:tab===id?`2px solid ${C.cyan}`:'2px solid transparent',cursor:'pointer'}}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      <div style={{padding:'12px 12px 130px'}}>
+
+        {tab==='chart'&&<>
+          <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:14,marginBottom:10}}>
+            <div style={{fontSize:10,fontWeight:700,letterSpacing:1.2,color:C.muted,marginBottom:8}}>PRECIO BTC/USDT</div>
+            <PriceChart history={history}/>
+          </div>
+          <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:14}}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
+              <span style={{fontSize:10,fontWeight:700,letterSpacing:1.2,color:C.muted}}>RSI (14)</span>
+              {latHist?.rsi&&<span style={{fontWeight:700,fontFamily:'monospace',fontSize:12,color:latHist.rsi<30?C.green:latHist.rsi>70?C.red:C.text}}>
+                {latHist.rsi} · {latHist.rsi<30?'SOBREVENDIDO 🟢':latHist.rsi>70?'SOBRECOMPRADO 🔴':'NEUTRAL'}
+              </span>}
+            </div>
+            <RSIChart history={history}/>
+          </div>
+        </>}
+
+        {tab==='trades'&&(
+          <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:14}}>
+            <div style={{fontSize:10,fontWeight:700,letterSpacing:1.2,color:C.muted,marginBottom:10}}>
+              HISTORIAL · {trades.length} operaciones
+            </div>
+            {trades.length===0?(
+              <div style={{textAlign:'center',padding:'30px 0',color:C.muted}}>
+                <div style={{fontSize:32,marginBottom:8}}>⏳</div>
+                <div>{warmup?`Arranca en ${warmupLeft} lecturas más`:'Esperando señal...'}</div>
+              </div>
+            ):(
+              <div style={{display:'flex',flexDirection:'column',gap:7}}>
+                {trades.map(t=>(
+                  <div key={t.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',
+                    padding:'9px 11px',background:C.bg,borderRadius:8,
+                    borderLeft:`3px solid ${t.type==='BUY'?C.green:C.red}`}}>
+                    <div>
+                      <div style={{fontWeight:700,color:t.type==='BUY'?C.green:C.red,fontSize:11}}>
+                        🤖 {t.type==='BUY'?'▲ COMPRA':'▼ VENTA'}
+                      </div>
+                      <div style={{color:C.muted,fontSize:10,marginTop:2}}>@ ${t.price.toLocaleString('es-AR')} · {t.time}</div>
+                    </div>
+                    <div style={{textAlign:'right'}}>
+                      <div style={{fontFamily:'monospace',fontSize:13,fontWeight:700}}>{$$(t.usd)}</div>
+                      {t.pnl!=null&&<div style={{fontSize:11,fontWeight:700,color:t.pnl>=0?C.green:C.red}}>{t.pnl>=0?'+':''}{$$(t.pnl)}</div>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {tab==='stats'&&(
+          <div style={{display:'flex',flexDirection:'column',gap:10}}>
+            {lastSig&&(
+              <div style={{background:C.card,border:`1px solid ${lastSig.type==='BUY'?C.green:C.red}`,borderRadius:10,padding:14}}>
+                <div style={{fontSize:10,color:C.muted,marginBottom:5}}>ÚLTIMA SEÑAL</div>
+                <div style={{fontSize:14,fontWeight:700,color:lastSig.type==='BUY'?C.green:C.red}}>
+                  {lastSig.type==='BUY'?'🟢':'🔴'} {lastSig.text}
+                </div>
+                <div style={{fontSize:11,color:C.muted,marginTop:4}}>{lastSig.t}</div>
+              </div>
+            )}
+            <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:14}}>
+              <div style={{fontSize:10,color:C.muted,letterSpacing:1,marginBottom:10}}>RESUMEN</div>
+              {[
+                ['Operaciones',trades.length],
+                ['Compras',trades.filter(t=>t.type==='BUY').length],
+                ['Ventas',sells.length],
+                ['Ganadoras',wins],
+                ['Win rate',winRate!=null?`${winRate}%`:'--'],
+                ['P&L total',$$(totalPnL)],
+                ['Retorno',`${ret>=0?'+':''}${ret.toFixed(2)}%`],
+                ['Capital inicial',$$(INITIAL_USD)],
+                ['Capital actual',$$(totalVal)],
+              ].map(([label,val])=>(
+                <div key={label} style={{display:'flex',justifyContent:'space-between',padding:'7px 0',borderBottom:`1px solid ${C.border}`}}>
+                  <span style={{color:C.muted}}>{label}</span>
+                  <span style={{fontWeight:700,fontFamily:'monospace'}}>{val}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Sticky Controls */}
+      <div style={{position:'fixed',bottom:0,left:0,right:0,background:C.card,borderTop:`1px solid ${C.border}`,padding:'12px 14px 24px'}}>
+        {lastSig&&(
+          <div style={{marginBottom:8,padding:'5px 10px',borderRadius:8,fontSize:11,
+            background:lastSig.type==='BUY'?'#10B98118':'#EF444418',
+            color:lastSig.type==='BUY'?C.green:C.red,fontWeight:600}}>
+            {lastSig.type==='BUY'?'🟢':'🔴'} {lastSig.text} · {lastSig.t}
+          </div>
+        )}
+        <div style={{display:'flex',gap:8,alignItems:'center',marginBottom:10}}>
+          <span style={{fontSize:11,color:C.muted}}>Estrategia:</span>
+          {[['rsi','RSI'],['ma','MA']].map(([s,label])=>(
+            <button key={s} onClick={()=>changeStrategy(s)}
+              style={{padding:'5px 14px',borderRadius:20,border:`1px solid ${strategy===s?C.cyan:C.border}`,
+                background:strategy===s?C.cyan+'28':'transparent',
+                color:strategy===s?C.cyan:C.muted,cursor:'pointer',fontSize:12,fontWeight:strategy===s?700:400}}>
+              {label}
+            </button>
+          ))}
+          <button onClick={toggleAuto}
+            style={{marginLeft:'auto',padding:'5px 14px',borderRadius:20,cursor:'pointer',fontSize:12,fontWeight:700,
+              border:`1px solid ${isAuto?C.green:C.red}`,
+              background:isAuto?C.green+'28':C.red+'28',color:isAuto?C.green:C.red}}>
+            {isAuto?'⏸ Pausar':'▶ Reanudar'}
+          </button>
+        </div>
+        <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:8}}>
+          <span style={{fontSize:11,color:C.muted,whiteSpace:'nowrap'}}>Tamaño:</span>
+          <input type="range" min={10} max={100} step={10} value={tradeSize} onChange={e=>changeSize(+e.target.value)}/>
+          <span style={{fontSize:12,fontWeight:700,fontFamily:'monospace',color:C.cyan,width:32}}>{tradeSize}%</span>
+        </div>
+        <div style={{textAlign:'center',fontSize:11,color:warmup?C.amber:isAuto?C.green:C.muted}}>
+          {warmup?`⏳ Recolectando datos... ${AUTO_START_AT-warmupLeft}/${AUTO_START_AT}`:isAuto?`🤖 Bot activo · ${strategy==='rsi'?'RSI<30 compra · RSI>70 vende':'Cruces MA7/MA25'}`:'⏸ Bot pausado'}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const root=ReactDOM.createRoot(document.getElementById('root'));
+root.render(<TradingBot/>);
+</script>
+
+<script>
+// PWA Manifest dinámico
+const manifest={
+  name:'Bot Trader BTC',short_name:'BotTrader',
+  description:'Bot de trading automático para Bitcoin',
+  start_url:'.',display:'standalone',
+  background_color:'#070B14',theme_color:'#070B14',
+  icons:[{src:"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",sizes:"192x192",type:"image/png"}]
+};
+const blob=new Blob([JSON.stringify(manifest)],{type:'application/json'});
+const link=document.createElement('link');
+link.rel='manifest'; link.href=URL.createObjectURL(blob);
+document.head.appendChild(link);
+</script>
+</body>
+</html>
